@@ -1,0 +1,34 @@
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environment
+venv/
+env/
+.env
+.venv/
+
+# Environment Variables
+.env
+.env.local
+
+# IDEs
+.vscode/
+.idea/
+
+# Database
+*.db
+*.sqlite3
+
+# Logs
+*.log
+
+# Artifacts/Temp
+backend/test_image.jpg
+backend/verify_*.py
+backend/check_models.py
+backend/test_full_pipeline.mp3
+backend/test_full_pipeline.jpg
+backend/response_*.mp3
