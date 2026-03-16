@@ -48,5 +48,6 @@ Only return valid JSON.
 
         try:
             return json.loads(output_text)
-        except:
+        except Exception as e:
+            print(f"Scribe Agent JSON Parsing Failed: {e}\nRaw Output: {output_text}")
             return {}

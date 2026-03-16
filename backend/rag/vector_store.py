@@ -23,6 +23,8 @@ class MedicalVectorStore:
             )
             # If DB is empty, re-index
             if len(self.db.get()["ids"]) == 0:
+                 # We must free the handles before trying to delete the directory on Windows
+                 self.db = None
                  self._index_documents()
         else:
              self._index_documents()
@@ -39,7 +41,7 @@ class MedicalVectorStore:
 
         # Clear existing DB if any (to avoid corruption issues)
         if os.path.exists(self.persist_directory):
-            shutil.rmtree(self.persist_directory)
+            shutil.rmtree(self.persist_directory, ignore_errors=True)
 
         all_docs = []
 

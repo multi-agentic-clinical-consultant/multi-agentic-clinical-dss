@@ -21,9 +21,9 @@ class ConsultantAgent:
         context = "\n\n".join(retrieved_docs)
 
         prompt = f"""
-You are an evidence-based ENT clinical decision support AI.
+You are an evidence-based clinical decision support AI.
 
-Use ONLY the medical knowledge provided below.
+Use the medical knowledge provided below if available to structure your response, but if none is provided or it is insufficient, use your own broad medical knowledge.
 
 MEDICAL KNOWLEDGE:
 {context}
@@ -39,8 +39,8 @@ Return ONLY valid JSON:
 }}
 
 Rules:
-- Base reasoning strictly on provided knowledge.
-- Reduce confidence if uncertain.
+- Give your best possible diagnosis or differential diagnosis based on the symptoms.
+- Reduce confidence if uncertain, but do not just output "Insufficient information" unless it is completely unintelligible.
 - Output strictly valid JSON.
 """
 

@@ -143,17 +143,8 @@ def build_workflow():
     workflow.add_edge("vision", "consultant")
     workflow.add_edge("consultant", "confidence_check")
 
-    # Conditional branching after confidence
-    def route_after_confidence(state: ClinicalState):
-        if state["requires_human_review"]:
-            return END
-        else:
-            return "scribe"
-
-    workflow.add_conditional_edges(
-        "confidence_check",
-        route_after_confidence
-    )
+    # Always generate a SOAP note regardless of confidence
+    workflow.add_edge("confidence_check", "scribe")
 
     workflow.add_edge("scribe", END)
 

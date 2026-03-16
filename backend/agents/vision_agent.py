@@ -67,7 +67,7 @@ class VisionAgent:
         except Exception as e:
             print(f"Vision Agent Error: {e}")
             return {
-                "finding": "Error interpreting image. Please consult a human radiologist.",
+                "finding": f"Error interpreting image: {str(e)}",
                 "confidence": 0.0
             }
 
