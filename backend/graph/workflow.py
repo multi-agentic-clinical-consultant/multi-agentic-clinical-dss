@@ -2,100 +2,33 @@ from langgraph.graph import StateGraph, END
 from graph.state import ClinicalState
 
 from agents.consultant_agent import ConsultantAgent
-from agents.scribe_agent import ScribeAgent
-from agents.vision_agent import VisionAgent
+from agents.transcription_agent import TranscriptionAgent
+from agents.prescription_agent import PrescriptionAgent
 
 
 # Initialize Agents
 consultant_agent = ConsultantAgent()
-scribe_agent = ScribeAgent()
-vision_agent = VisionAgent()
+transcription_agent = TranscriptionAgent()
+prescription_agent = PrescriptionAgent()
 
 
 # ---------------------------------------
-# Node 0: Intent Classification (Enhanced)
-# ---------------------------------------
-def intent_node(state: ClinicalState) -> ClinicalState:
-    from groq import Groq
-    import os
-    
-    # Simple instatiation - in production, dependency inject or reuse global client
-    client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-    
-    user_text = state["patient_text"]
-    
-    system_prompt = """
-    You are a clinical intent router. 
-    Analyze the patient's request.
-    
-    If the user implies they want you to LOOK at something, analyzes an image, scan, X-ray, or asks "does this look...", classify as "vision".
-    Otherwise, classify as "consultation".
-    
-    Return ONLY one word: "vision" or "consultation".
-    """
-    
-    try:
-        response = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_text}
-            ],
-            temperature=0.0
-        )
-        intent = response.choices[0].message.content.strip().lower()
-        
-        # Validation fallback
-        if "vision" in intent:
-            state["intent"] = "vision"
-        else:
-            state["intent"] = "consultation"
-            
-    except Exception as e:
-        # Fallback to keyword matching if LLM fails
-        print(f"Intent Router Error: {e}")
-        text = user_text.lower()
-        if "scan" in text or "ct" in text or "xray" in text or "look" in text or "image" in text:
-            state["intent"] = "vision"
-        else:
-            state["intent"] = "consultation"
-
-    return state
-
-
-# ---------------------------------------
-# Node 1: Vision Agent (if image provided)
-# ---------------------------------------
-def vision_node(state: ClinicalState) -> ClinicalState:
-
-    if state.get("image_path"):
-        findings = vision_agent.analyze_image(state["image_path"])
-        state["vision_findings"] = findings
-
-    return state
-
-
-# ---------------------------------------
-# Node 2: Consultant Agent (Diagnosis)
+# Node 1: Consultant Agent (Diagnosis)
 # ---------------------------------------
 def consultant_node(state: ClinicalState) -> ClinicalState:
 
-    # If vision findings exist, append them to patient text
     input_text = state["patient_text"]
-
-    if state.get("vision_findings"):
-        input_text += f"\nVision Findings: {state['vision_findings']}"
 
     result = consultant_agent.handle_case(input_text)
 
-    state["diagnosis"] = result.get("diagnosis")
-    state["confidence"] = result.get("confidence")
+    state["diagnosis"] = result.get("diagnosis", "Unknown Diagnosis")
+    state["confidence"] = result.get("confidence", 0.0)
 
     return state
 
 
 # ---------------------------------------
-# Node 3: Confidence Check
+# Node 2: Confidence Check
 # ---------------------------------------
 def confidence_node(state: ClinicalState) -> ClinicalState:
 
@@ -108,11 +41,32 @@ def confidence_node(state: ClinicalState) -> ClinicalState:
 
 
 # ---------------------------------------
-# Node 4: Scribe Agent (SOAP Generation)
+# Node 3: Prescription Agent (Meds & Referral)
 # ---------------------------------------
-def scribe_node(state: ClinicalState) -> ClinicalState:
+def prescription_node(state: ClinicalState) -> ClinicalState:
 
-    soap = scribe_agent.generate_soap(
+    diagnosis = state["diagnosis"]
+    if state["requires_human_review"]:
+        # If confidence is low, we might still generate tentative plans or defer
+        # But we'll just run it as a regular operation
+        pass
+
+    result = prescription_agent.generate_prescription_and_referral(
+        state["patient_text"],
+        diagnosis,
+        state.get("patient_history", "No known allergies or past conditions.")
+    )
+    state["prescription"] = result.get("prescription")
+    state["referral"] = result.get("referral")
+    return state
+
+
+# ---------------------------------------
+# Node 4: Transcription Agent (SOAP Generation)
+# ---------------------------------------
+def transcription_node(state: ClinicalState) -> ClinicalState:
+
+    soap = transcription_agent.generate_soap(
         state["patient_text"],
         state["diagnosis"]
     )
@@ -129,23 +83,22 @@ def build_workflow():
     workflow = StateGraph(ClinicalState)
 
     # Add nodes
-    workflow.add_node("intent", intent_node)
-    workflow.add_node("vision", vision_node)
     workflow.add_node("consultant", consultant_node)
     workflow.add_node("confidence_check", confidence_node)
-    workflow.add_node("scribe", scribe_node)
+    workflow.add_node("prescription", prescription_node)
+    workflow.add_node("transcription", transcription_node)
 
     # Entry point
-    workflow.set_entry_point("intent")
+    workflow.set_entry_point("consultant")
 
     # Routing
-    workflow.add_edge("intent", "vision")
-    workflow.add_edge("vision", "consultant")
     workflow.add_edge("consultant", "confidence_check")
+    workflow.add_edge("confidence_check", "prescription")
+    
+    # Scribe should probably run after we have the full picture
+    workflow.add_edge("prescription", "transcription")
 
-    # Always generate a SOAP note regardless of confidence
-    workflow.add_edge("confidence_check", "scribe")
-
-    workflow.add_edge("scribe", END)
+    workflow.add_edge("transcription", END)
 
     return workflow.compile()
+
