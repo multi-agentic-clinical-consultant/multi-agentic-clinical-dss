@@ -1,15 +1,28 @@
+# FastAPI & Web
 fastapi
+uvicorn[standard]
 python-multipart
 pydantic
-uvicorn
-python-dotenv
-groq
-openai-whisper
-gTTS
+requests
+
+# AI Orchestration & Agents
 langgraph
+groq
+elevenlabs
+gTTS
+duckduckgo-search
+python-dotenv
+
+# Database & Persistence
+pymongo
+dnspython
+chromadb==0.4.24
+
+# RAG & Medical Processing
 langchain-chroma
 langchain-huggingface
 langchain-community
 langchain-text-splitters
 pypdf
 sentence-transformers
+numpy<2.0

@@ -2,6 +2,7 @@ from typing import TypedDict, Optional
 
 
 class ClinicalState(TypedDict):
+    patient_id: Optional[str]
     patient_text: str
     patient_history: Optional[str]
     intent: Optional[str]

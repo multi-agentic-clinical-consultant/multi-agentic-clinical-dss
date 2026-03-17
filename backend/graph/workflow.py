@@ -4,12 +4,14 @@ from graph.state import ClinicalState
 from agents.consultant_agent import ConsultantAgent
 from agents.transcription_agent import TranscriptionAgent
 from agents.prescription_agent import PrescriptionAgent
+from database import ClinicalDatabase
 
 
-# Initialize Agents
+# Initialize Agents & DB
 consultant_agent = ConsultantAgent()
 transcription_agent = TranscriptionAgent()
 prescription_agent = PrescriptionAgent()
+db = ClinicalDatabase()
 
 
 # ---------------------------------------
@@ -51,6 +53,15 @@ def prescription_node(state: ClinicalState) -> ClinicalState:
         # But we'll just run it as a regular operation
         pass
 
+    # Dynamically fetch patient history from MongoDB if a patient_id is provided
+    # and no history was passed in the initial state
+    patient_id = state.get("patient_id")
+    current_history = state.get("patient_history")
+    
+    if patient_id and (not current_history or current_history == "No known allergies or past conditions."):
+        print(f"Workflow: Fetching history for patient {patient_id} from MongoDB...")
+        state["patient_history"] = db.get_patient_history(patient_id)
+
     result = prescription_agent.generate_prescription_and_referral(
         state["patient_text"],
         diagnosis,
@@ -76,6 +87,18 @@ def transcription_node(state: ClinicalState) -> ClinicalState:
 
 
 # ---------------------------------------
+# Node 5: Database Node (Saving Results)
+# ---------------------------------------
+def database_node(state: ClinicalState) -> ClinicalState:
+    patient_id = state.get("patient_id", "anonymous_patient")
+    print(f"Workflow: Saving session for {patient_id} to MongoDB...")
+    
+    db.save_session(patient_id, state)
+    
+    return state
+
+
+# ---------------------------------------
 # Build Workflow Graph
 # ---------------------------------------
 def build_workflow():
@@ -87,6 +110,7 @@ def build_workflow():
     workflow.add_node("confidence_check", confidence_node)
     workflow.add_node("prescription", prescription_node)
     workflow.add_node("transcription", transcription_node)
+    workflow.add_node("database", database_node)
 
     # Entry point
     workflow.set_entry_point("consultant")
@@ -95,10 +119,13 @@ def build_workflow():
     workflow.add_edge("consultant", "confidence_check")
     workflow.add_edge("confidence_check", "prescription")
     
-    # Scribe should probably run after we have the full picture
+    # Scribe/Transcription runs after prescription
     workflow.add_edge("prescription", "transcription")
+    
+    # Finally, save everything to the database
+    workflow.add_edge("transcription", "database")
 
-    workflow.add_edge("transcription", END)
+    workflow.add_edge("database", END)
 
     return workflow.compile()
 
