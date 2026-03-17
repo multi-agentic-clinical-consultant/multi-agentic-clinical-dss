@@ -3,13 +3,13 @@ from graph.state import ClinicalState
 
 from agents.consultant_agent import ConsultantAgent
 from agents.scribe_agent import ScribeAgent
-from agents.vision_agent import VisionAgent
+from agents.xray_agent import XRayAgent
 
 
 # Initialize Agents
 consultant_agent = ConsultantAgent()
 scribe_agent = ScribeAgent()
-vision_agent = VisionAgent()
+xray_agent = XRayAgent()
 
 
 # ---------------------------------------
@@ -28,10 +28,10 @@ def intent_node(state: ClinicalState) -> ClinicalState:
     You are a clinical intent router. 
     Analyze the patient's request.
     
-    If the user implies they want you to LOOK at something, analyzes an image, scan, X-ray, or asks "does this look...", classify as "vision".
+    If the user specifically mentions an "xray", "x-ray", "bone scan", "chest x-ray", or specifically asks you to analyze an image, classify as "xray".
     Otherwise, classify as "consultation".
     
-    Return ONLY one word: "vision" or "consultation".
+    Return ONLY one word: "xray" or "consultation".
     """
     
     try:
@@ -46,8 +46,8 @@ def intent_node(state: ClinicalState) -> ClinicalState:
         intent = response.choices[0].message.content.strip().lower()
         
         # Validation fallback
-        if "vision" in intent:
-            state["intent"] = "vision"
+        if "xray" in intent or "x-ray" in intent:
+            state["intent"] = "xray"
         else:
             state["intent"] = "consultation"
             
@@ -55,8 +55,8 @@ def intent_node(state: ClinicalState) -> ClinicalState:
         # Fallback to keyword matching if LLM fails
         print(f"Intent Router Error: {e}")
         text = user_text.lower()
-        if "scan" in text or "ct" in text or "xray" in text or "look" in text or "image" in text:
-            state["intent"] = "vision"
+        if "xray" in text or "x-ray" in text or "bone" in text or "chest" in text or "scan" in text or "image" in text or "picture" in text:
+            state["intent"] = "xray"
         else:
             state["intent"] = "consultation"
 
@@ -64,13 +64,13 @@ def intent_node(state: ClinicalState) -> ClinicalState:
 
 
 # ---------------------------------------
-# Node 1: Vision Agent (if image provided)
+# Node 1: XRay Agent (if X-ray/image provided)
 # ---------------------------------------
-def vision_node(state: ClinicalState) -> ClinicalState:
+def xray_node(state: ClinicalState) -> ClinicalState:
 
     if state.get("image_path"):
-        findings = vision_agent.analyze_image(state["image_path"])
-        state["vision_findings"] = findings
+        findings = xray_agent.analyze_xray(state["image_path"])
+        state["xray_findings"] = findings
 
     return state
 
@@ -80,11 +80,11 @@ def vision_node(state: ClinicalState) -> ClinicalState:
 # ---------------------------------------
 def consultant_node(state: ClinicalState) -> ClinicalState:
 
-    # If vision findings exist, append them to patient text
+    # If xray findings exist, append them to patient text
     input_text = state["patient_text"]
 
-    if state.get("vision_findings"):
-        input_text += f"\nVision Findings: {state['vision_findings']}"
+    if state.get("xray_findings"):
+        input_text += f"\nX-Ray/Image Findings: {state['xray_findings']}"
 
     result = consultant_agent.handle_case(input_text)
 
@@ -130,7 +130,7 @@ def build_workflow():
 
     # Add nodes
     workflow.add_node("intent", intent_node)
-    workflow.add_node("vision", vision_node)
+    workflow.add_node("xray", xray_node)
     workflow.add_node("consultant", consultant_node)
     workflow.add_node("confidence_check", confidence_node)
     workflow.add_node("scribe", scribe_node)
@@ -139,8 +139,23 @@ def build_workflow():
     workflow.set_entry_point("intent")
 
     # Routing
-    workflow.add_edge("intent", "vision")
-    workflow.add_edge("vision", "consultant")
+    def route_intent(state: ClinicalState):
+        if not state.get("image_path"):
+            return "consultant"
+        if state.get("intent") == "xray":
+            return "xray"
+        return "consultant"
+
+    workflow.add_conditional_edges(
+        "intent",
+        route_intent,
+        {
+            "xray": "xray",
+            "consultant": "consultant"
+        }
+    )
+    
+    workflow.add_edge("xray", "consultant")
     workflow.add_edge("consultant", "confidence_check")
 
     # Always generate a SOAP note regardless of confidence

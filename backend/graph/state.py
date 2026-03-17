@@ -6,6 +6,7 @@ class ClinicalState(TypedDict):
     intent: Optional[str]
     image_path: Optional[str]
     vision_findings: Optional[dict]
+    xray_findings: Optional[dict]
     diagnosis: Optional[str]
     confidence: Optional[float]
     soap_note: Optional[dict]
