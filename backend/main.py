@@ -37,8 +37,9 @@ def read_root():
 # Request Model for Text-Based Consultation
 # -----------------------------------------
 class PatientInput(BaseModel):
+    patient_id: Optional[str] = "anonymous_patient"
     message: str
-    image_path: Optional[str] = None
+    patient_history: Optional[str] = "No known allergies or past conditions."
 
 
 # -----------------------------------------
@@ -48,12 +49,14 @@ class PatientInput(BaseModel):
 def analyze_case(input_data: PatientInput):
 
     initial_state = {
+        "patient_id": input_data.patient_id,
         "patient_text": input_data.message,
+        "patient_history": input_data.patient_history,
         "intent": None,
-        "image_path": input_data.image_path,
-        "vision_findings": None,
         "diagnosis": None,
         "confidence": None,
+        "prescription": None,
+        "referral": None,
         "soap_note": None,
         "requires_human_review": None
     }
@@ -84,7 +87,7 @@ async def transcribe_audio(file: UploadFile = File(...)):
 # AUDIO → FULL VOICE CONSULT PIPELINE
 # -----------------------------------------
 @app.post("/voice-consult")
-async def voice_consult(file: UploadFile = File(...)):
+async def voice_consult(patient_id: Optional[str] = "anonymous_patient", file: UploadFile = File(...)):
 
     file_location = f"temp_{file.filename}"
 
@@ -100,12 +103,14 @@ async def voice_consult(file: UploadFile = File(...)):
 
     # Step 2: Send transcript to LangGraph workflow
     initial_state = {
+        "patient_id": patient_id,
         "patient_text": transcript,
+        "patient_history": "No known allergies or past conditions.",
         "intent": None,
-        "image_path": None,
-        "vision_findings": None,
         "diagnosis": None,
         "confidence": None,
+        "prescription": None,
+        "referral": None,
         "soap_note": None,
         "requires_human_review": None
     }

@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-class ScribeAgent:
+class TranscriptionAgent:
     def __init__(self):
         self.client = Groq(
             api_key=os.getenv("GROQ_API_KEY")

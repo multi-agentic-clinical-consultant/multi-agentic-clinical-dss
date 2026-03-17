@@ -21,7 +21,7 @@ class ConsultantAgent:
         context = "\n\n".join(retrieved_docs)
 
         prompt = f"""
-You are an evidence-based clinical decision support AI.
+You are an evidence-based clinical decision support AI. Use your extensive medical training to analyze the patient's symptoms.
 
 Use the medical knowledge provided below if available to structure your response, but if none is provided or it is insufficient, use your own broad medical knowledge.
 

@@ -1,60 +1,64 @@
-# Multi-Agentic Clinical Decision Support System (DSS)
+# Multi-Agentic Clinical consultant 
 
-A comprehensive, AI-powered Clinical Decision Support System that leverages a multi-agent architectural pattern to process multimodal patient data (text, voice, and medical imaging). The system analyzes symptoms, visual findings, and medical domains to generate detailed clinical assessments and structured SOAP notes.
+A state-of-the-art, AI-powered Clinical Decision Support System. This system leverages a **Multi-Agent Orchestration** pattern with **Long-term Memory** via MongoDB to provide persistent, evidence-based clinical assessments.
 
-## 🚀 Features
+## 🌟 Key Features
 
-- **Multi-Agent Architecture**: Built with LangGraph, utilizing specialized agents for medical tasks.
-- **Voice-to-Voice Pipelines**: End-to-end voice consultation. Uses Speech-to-Text (Whisper) to transcribe patient input, processes it, and returns Text-to-Speech (gTTS) audio responses.
-- **Vision Analysis**: Integrates visual analysis for medical imaging (e.g., X-Rays, scans) directly into the diagnostic workflow.
-- **Retrieval-Augmented Generation (RAG)**: Uses ChromaDB to index local medical documents for highly contextual, evidence-based diagnoses.
-- **SOAP Note Generation**: Automatically generates structured clinical documentation (Subjective, Objective, Assessment, Plan).
-- **FastAPI Backend**: Exposes clean APIs for text analysis, audio transcription, and full voice consultations.
+- **Persistent Patient Memory**: Integrates **MongoDB Atlas** to store visit history. The AI "remembers" previous diagnoses and prescriptions, enabling temporal reasoning and follow-up care.
+- **Multimodal Consultation**: 
+    - **Voice-to-Voice**: High-speed transcription via Groq (Whisper) and realistic speech synthesis via ElevenLabs.
+    - **Text-Analysis**: Structured clinical evaluations from raw symptoms.
+- **Evidence-Based RAG**: Retrieval-Augmented Generation using **ChromaDB** to index local medical PDFs (e.g., AAP Guidelines, clinical papers).
+- **Automated Scribe**: Generates structured **SOAP Notes** (Subjective, Objective, Assessment, Plan) in JSON format.
+- **Advanced Orchestration**: Built with **LangGraph** for conditional routing between specialized agents (Consultant, Scribe, Prescription).
 
-## 🏗️ System Architecture
+## 🏗️ System Components
 
-The core orchestration is handled by **LangGraph**, which routes requests conditionally through various specialized agents:
-1. **STT Agent**: Transcribes incoming audio.
-2. **Intent & Vision Agent**: Classifies the interaction type and extracts findings from uploaded medical imaging.
-3. **Consultant Agent**: The core diagnostic engine. Uses RAG against a ChromaDB vector store and a general physician LLM to evaluate the symptoms.
-4. **Scribe Agent**: Formats the final diagnostic assessment into a formal SOAP note.
-5. **TTS Agent**: Converts the consultative response back to an audio file for the patient/practitioner.
+1.  **Consultant Agent**: The core diagnostic engine using Llama 3.3 and Medical RAG.
+2.  **Transcription Agent**: The medical scribe that structures session data into hospital-ready documentation.
+3.  **Prescription Agent**: Handles dosage calculation and medication planning.
+4.  **Database Layer**: Manages session snapshots and patient history in MongoDB.
 
-## 🛠️ Prerequisites
+## 🛠️ Getting Started
 
-- Python 3.9+
-- [FFmpeg](https://ffmpeg.org/download.html) (Required for Whisper audio processing)
-- A [Groq API Key](https://console.groq.com/) for fast LLM inference
+### 1. Prerequisites
+- Python 3.10+ (Tested on 3.13)
+- [FFmpeg](https://ffmpeg.org/) installed and added to your PATH.
+- A running MongoDB Atlas cluster or local MongoDB instance.
 
-## 💻 Installation
+### 2. Installation
+```bash
+# Set up virtual environment
+python -m venv venv
+venv\Scripts\activate
 
-1. **Clone the repository and set up a Virtual Environment**
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows use: venv\Scripts\activate
-   ```
+# Install dependencies
+pip install -r requirements.txt
+```
 
-2. **Install Dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
+### 3. Environment Setup
+Create a `.env` file in the root directory:
+```env
+GROQ_API_KEY=your_key
+ELEVENLABS_API_KEY=your_key (optional, defaults to gTTS)
+MONGO_URI=mongodb+srv://<user>:<password>@cluster.mongodb.net/
+```
 
-3. **Configure Environment Variables**
-   Create a `.env` file in the root formatting your Groq API key:
-   ```env
-   GROQ_API_KEY=your_actual_api_key_here
-   ```
-
-4. **Add Medical Documents (Optional but Recommended)**
-   Place any medical reference PDFs or text guides in the `backend/medical_docs` folder. The RAG system will index these documents locally into ChromaDB on startup.
-
-## 🏃 Running the Application
-
-Start the backend FastAPI server using Uvicorn:
-
+### 4. Running the System
 ```bash
 cd backend
 uvicorn main:app --reload
 ```
 
-The server will be available at `http://127.0.0.1:8000`.
+## 🧪 Testing the Integrated Flow
+To verify the MongoDB connection and the AI's "memory" across two visits:
+```bash
+python backend/test_integrated_db.py
+```
+
+## 📂 Project Structure
+- `backend/agents/`: Specialized AI agents (STT, TTS, Scribe, Consultant).
+- `backend/graph/`: LangGraph workflow definition and state management.
+- `backend/medical_docs/`: Drop your medical PDFs here for RAG indexing.
+- `backend/rag/`: Local vector database storage.
+- `backend/database.py`: MongoDB Atlas connection logic.
