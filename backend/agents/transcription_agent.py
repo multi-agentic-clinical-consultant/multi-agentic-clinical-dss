@@ -46,7 +46,7 @@ Only return valid JSON.
 
         output_text = response.choices[0].message.content
 
-        # Cleanup potential markdown code blocks
+        # Simple cleanup in case the model adds markdown ticks
         if "```json" in output_text:
             output_text = output_text.split("```json")[1].split("```")[0].strip()
         elif "```" in output_text:

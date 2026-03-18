@@ -6,6 +6,7 @@ class ClinicalState(TypedDict):
     patient_text: str
     patient_history: Optional[str]
     intent: Optional[str]
+    xray_findings: Optional[dict]
     diagnosis: Optional[str]
     confidence: Optional[float]
     prescription: Optional[dict]
