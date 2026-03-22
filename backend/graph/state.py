@@ -20,6 +20,3 @@ class PrescriptionState(TypedDict):
 
     # Populated by prescription_node
     prescription: Optional[dict]
-
-    # Populated by soap_node
-    soap_note: Optional[dict]

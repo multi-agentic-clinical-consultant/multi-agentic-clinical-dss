@@ -15,8 +15,8 @@ inferedge-moss                 # Moss Python SDK
 
 # ── Prescription pipeline dependencies ────────────────────────────────────────
 requests                       # RxNorm API calls
+ddgs                           # FDA / drug safety web search (renamed from duckduckgo-search)
 duckduckgo-search              # FDA / drug safety web search
-
 # ── Utilities ─────────────────────────────────────────────────────────────────
 python-dotenv
 pypdf                          # Optional: load PDF knowledge files for Moss indexing
