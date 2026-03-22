@@ -33,3 +33,4 @@ backend/test_full_pipeline.mp3
 backend/test_full_pipeline.jpg
 backend/response_*.mp3
 data/
+FINETUNING_GUIDE.md
