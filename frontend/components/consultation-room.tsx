@@ -179,7 +179,7 @@ function ConsultationUI({
             <Stethoscope className="h-4 w-4 text-white" />
           </div>
           <div>
-            <p className="text-sm font-semibold text-white">MediConsult AI</p>
+            <p className="text-sm font-semibold text-white">MedBuddy AI</p>
             <p className="text-xs text-slate-400">Secure consultation</p>
           </div>
         </div>

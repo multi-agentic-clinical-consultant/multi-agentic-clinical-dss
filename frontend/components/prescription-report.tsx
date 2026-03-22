@@ -110,7 +110,7 @@ export function PrescriptionReport({ report: raw, onNewConsultation, onRegenerat
               <Stethoscope className="h-4 w-4 text-white" />
             </div>
             <div>
-              <p className="text-sm font-bold text-slate-800">MediConsult AI</p>
+              <p className="text-sm font-bold text-slate-800">MedBuddy AI</p>
               <p className="text-xs text-slate-500">Prescription Report</p>
             </div>
           </div>

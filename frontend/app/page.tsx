@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { ConsultationRoom } from "@/components/consultation-room";
 import { PrescriptionReport } from "@/components/prescription-report";
+import { XRayAnalyzer } from "@/components/xray-analyzer";
 import {
   Stethoscope,
   Activity,
@@ -15,7 +16,7 @@ import {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-type AppState = "join" | "consultation" | "processing" | "report" | "error";
+type AppState = "join" | "consultation" | "processing" | "report" | "error" | "xray";
 
 interface TokenData {
   token: string;
@@ -173,6 +174,10 @@ export default function Home() {
     return <ProcessingScreen pollCount={pollCount} />;
   }
 
+  if (appState === "xray") {
+    return <XRayAnalyzer onBack={handleReset} />;
+  }
+
   if (appState === "error") {
     return <ErrorScreen message={errorMsg} onRetry={handleReset} />;
   }
@@ -188,7 +193,7 @@ export default function Home() {
               <Stethoscope className="h-5 w-5 text-white" />
             </div>
             <div>
-              <p className="text-sm font-bold text-slate-800 tracking-tight">MediConsult AI</p>
+              <p className="text-sm font-bold text-slate-800 tracking-tight">MedBuddy AI</p>
               <p className="text-xs text-slate-500">Intelligent Health Consultation</p>
             </div>
           </div>
@@ -279,7 +284,7 @@ export default function Home() {
                   <input
                     id="patient-name"
                     type="text"
-                    placeholder="e.g. Kesha"
+                    placeholder="e.g. Keshav"
                     value={nameInput}
                     onChange={(e) => setNameInput(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && !isStarting && handleStart()}
@@ -307,6 +312,19 @@ export default function Home() {
                   )}
                 </button>
 
+                <div className="relative flex items-center gap-3">
+                  <div className="flex-1 border-t border-slate-200" />
+                  <span className="text-xs text-slate-400">or</span>
+                  <div className="flex-1 border-t border-slate-200" />
+                </div>
+
+                <button
+                  onClick={() => setAppState("xray")}
+                  className="w-full flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-6 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-100 transition-all"
+                >
+                  🩻 Analyze X-Ray
+                </button>
+
                 <p className="text-center text-xs text-slate-400 leading-relaxed">
                   By continuing, you acknowledge this is an AI assistant and
                   not a substitute for professional medical advice.
@@ -320,7 +338,7 @@ export default function Home() {
       {/* Footer */}
       <footer className="border-t border-slate-200 bg-white/60 py-4">
         <p className="text-center text-xs text-slate-400">
-          MediConsult AI · Clinical Decision Support System · For educational use only
+          MedBuddy AI · Clinical Decision Support System · For educational use only
         </p>
       </footer>
     </div>

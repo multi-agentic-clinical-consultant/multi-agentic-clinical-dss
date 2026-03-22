@@ -357,9 +357,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
     await session.generate_reply(
         instructions=(
-            "Greet the patient warmly and naturally — like you're genuinely happy to see them. "
-            "Introduce yourself as Dr. Arthur. Keep it short and inviting, then ask what's on their mind today."
-        )
+            "Introduce yourself as Dr. Arthur. Greet the patient warmly and naturally — like you're genuinely happy to see them. Just once at the beginning.")
     )
 
     # ── Wait for disconnect ───────────────────────────────────────────────────

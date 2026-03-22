@@ -1,148 +1,196 @@
-import os
+import base64
 import json
-import torch
-import torchvision
-import torchxrayvision as xrv
-import skimage.io
+import logging
+import os
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from openai import OpenAI
 from groq import Groq
 from dotenv import load_dotenv
 
 load_dotenv()
+logger = logging.getLogger("xray_agent")
+
+
+# ── Prompts ───────────────────────────────────────────────────────────────────
+_SYSTEM_PROMPT = (
+    "You are a senior board-certified radiologist with expert subspecialty training in MSK (musculoskeletal) "
+    "and thoracic imaging. Your goal is to provide a highly accurate, systematic analysis of any X-ray image. "
+    "\n\nGUIDELINES FOR ANALYSIS:"
+    "\n1. SYSTEMATIC SEARCH: For bones, trace every cortical margin for breaks, step-offs, or lucency. "
+    "\n2. JOINT CONGRUITY: Evaluate every joint for widening, narrowing, or subluxation. "
+    "\n3. FRACTURES: Be extremely vigilant for subtle fractures (e.g., scaphoid, tibial plateau, compression). "
+    "\n4. PATHOLOGY: Look for lung nodules, effusions, bowel gas patterns, or calcifications as appropriate. "
+    "\n5. UNCERTAINTY: If a finding is subtle, state 'suspicious for' or 'suggestive of' rather than reporting as definitive. "
+    "\n\nOUTPUT RULES:"
+    "\n- Output strictly valid JSON."
+    "\n- No conversational filler, no markdown fences (unless explicitly requested), no prose outside JSON."
+)
+
+_USER_PROMPT_TEMPLATE = """\
+Perform a Comprehensive X-Ray Analysis using a Chain-of-Thought approach.
+
+PHASE 1: IDENTIFICATION
+Identify the exact body part, projection(s) (e.g. AP, Lateral, Oblique), and image quality.
+
+PHASE 2: SYSTEMATIC REVIEW
+Perform a step-by-step review of:
+- BONES: Review all cortical surfaces, trabecular patterns, and density.
+- JOINTS: Assess alignment, joint space width, and subchondral surfaces.
+- SOFT TISSUES: Look for swelling, joint effusions, or foreign bodies.
+- OTHER (if applicable): Review lungs, mediastinum, or abdomen if visualized.
+
+PHASE 3: TARGETED SEARCH FOR FRACTURES/ISSUES
+Specifically search for:
+- Discontinuity in cortical lines.
+- Lucent lines or sclerotic bands (impaction).
+- Abnormal angulation, rotation, or shortening.
+- Avulsion sites at ligament/tendon attachments.
+
+Return ONLY valid JSON with this structure:
+{{
+  "xray_type": "Body part and projection",
+  "technique": "Image quality and views",
+  "findings": {{
+    "bones": "Description of osseous structures",
+    "joints": "Description of articulations",
+    "soft_tissues": "Soft tissue findings",
+    "other": "Lungs/abdomen/etc if applicable"
+  }},
+  "fractures": [
+    {{
+      "location": "Specific anatomical site (e.g. distal radius)",
+      "type": "Pattern (transverse, oblique, spiral, comminuted, avulsion, buckle, etc.)",
+      "displacement": "Degree and direction (e.g. 2mm dorsal displacement)",
+      "certainty": "Definitive | Suspicious | Subtle",
+      "notes": "Intra-articular extension, etc."
+    }}
+  ],
+  "dislocations": [
+    {{
+      "joint": "Joint name",
+      "direction": "Direction of displacement",
+      "notes": "Associated findings"
+    }}
+  ],
+  "impression": [
+    "Most significant finding first",
+    "Secondary findings"
+  ],
+  "primary_diagnosis": "Single most likely diagnosis (e.g. Distal Radius Fracture)",
+  "severity": "normal | mild | moderate | severe",
+  "requires_urgent_review": true/false
+}}
+"""
 
 class XRayAgent:
+    """
+    Analyzes X-ray images using Groq Vision VLMs with a specialized radiologist persona.
+    """
+
     def __init__(self):
-        # Initialize Groq client for the LLM Step
-        self.client = Groq(
-            api_key=os.getenv("GROQ_API_KEY")
+        self.client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+        self.vlm_model = "gpt-5.4"
+
+    @staticmethod
+    def _encode_image(image_path: str) -> tuple[str, str]:
+        """Return (base64_string, mime_type) for the image."""
+        suffix = Path(image_path).suffix.lower()
+        mime_map = {
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".png": "image/png",
+            ".webp": "image/webp",
+        }
+        mime_type = mime_map.get(suffix, "image/jpeg")
+        with open(image_path, "rb") as fh:
+            data = base64.b64encode(fh.read()).decode("utf-8")
+        return data, mime_type
+
+    def _analyze_with_vlm(self, image_path: str, model: str) -> dict:
+        """Send image to Groq VLM for analysis."""
+        image_b64, mime_type = self._encode_image(image_path)
+        try:
+            model="gpt-5.4"
+        except Exception as e:
+            logger.error("Failed to load model: %s", e)
+            raise RuntimeError(f"Failed to load model: {e}") from e
+        response = self.client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{mime_type};base64,{image_b64}"
+                            },
+                        },
+                        {"type": "text", "text": _USER_PROMPT_TEMPLATE},
+                    ],
+                },
+            ],
+            temperature=0.5,  # Lower temperature for more consistent clinical output
+            # max_tokens=2000,
         )
-        # Fast, standard Groq text model since we are passing textual findings now
-        self.llm_model = "llama-3.3-70b-versatile" 
+
+        text = response.choices[0].message.content.strip()
         
-        # Initialize TorchXRayVision Model for the Detection Step
-        print("Loading TorchXRayVision model (DenseNet121)...")
-        # Ensure we don't redownload weights pointlessly if cached
-        self.vision_model = xrv.models.DenseNet(weights="densenet121-res224-all")
-        self.vision_model.eval() # Set to evaluation mode
-        
-        # Image transformation pipeline expected by the model
-        self.transform = torchvision.transforms.Compose([
-            xrv.datasets.XRayCenterCrop(),
-            xrv.datasets.XRayResizer(224)
-        ])
+        # Clean up JSON if model includes markdown fences
+        if "```json" in text:
+            text = text.split("```json")[1].split("```")[0].strip()
+        elif "```" in text:
+            text = text.split("```")[1].split("```")[0].strip()
 
-    def detect_pathologies(self, image_path: str):
-        """Step 1: Run TorchXRayVision to get disease probabilities"""
         try:
-            # Load the image
-            img = skimage.io.imread(image_path)
-            
-            # Normalize to [-1024, 1024] as expected by xrv
-            img = xrv.datasets.normalize(img, 255) 
-            
-            # Check if image has multiple channels (e.g., RGB) and convert to 1 channel (grayscale)
-            if len(img.shape) == 3:
-                # Typically shape is (H, W, C) for skimage
-                # xrv expects (C, H, W) where C=1
-                img = img.mean(2)[None, ...] # Average channels, add C dim
-            elif len(img.shape) == 2:
-                # Just (H, W), add C dim
-                img = img[None, ...]
-                
-            # Apply transforms (Crop -> Resize)
-            img = self.transform(img)
-            
-            # Convert to PyTorch tensor and add Batch dimension: (1, 1, 224, 224)
-            img_tensor = torch.from_numpy(img).unsqueeze(0)
-            
-            # Run inference
-            with torch.no_grad():
-                outputs = self.vision_model(img_tensor)
-            
-            # Map probabilities to pathology names
-            results = dict(zip(self.vision_model.pathologies, outputs[0].detach().numpy()))
-            
-            # Filter and sort results (just keeping anything above a minimal threshold like 1% to give context to LLM)
-            # Actually, let's just keep the top 5 or anything > 10%
-            clinical_findings = {k: float(v) for k, v in results.items() if v > 0.05}
-            # Sort by probability descending
-            clinical_findings = dict(sorted(clinical_findings.items(), key=lambda item: item[1], reverse=True))
-            
-            return clinical_findings
-            
-        except Exception as e:
-            print(f"Error in X-Ray Detection step: {e}")
-            return None
+            return json.loads(text)
+        except json.JSONDecodeError as e:
+            logger.error("VLM output was not valid JSON: %s", text)
+            raise RuntimeError(f"Failed to parse VLM response: {e}") from e
 
-    def synthesize_findings(self, clinical_findings: dict):
-        """Step 2: Use LLM to synthesize detection probabilities into clinical suggestions"""
-        try:
-            if not clinical_findings:
-                return {
-                    "finding": "Error processing X-Ray.",
-                    "confidence": 0.0,
-                    "suggestions": "Review the image format and try again."
-                }
-                
-            # Convert findings to readable string
-            findings_str = "\n".join([f"- {k}: {v*100:.1f}% probability" for k, v in clinical_findings.items()])
-            
-            prompt = f"""
-            You are a highly experienced clinical radiologist and diagnostician.
-            An AI detection model has analyzed a patient's X-Ray and provided the following pathology probabilities:
-            
-            {findings_str}
-            
-            Assess these computational findings. Identify the most likely clinical issues (ignoring very low probabilities).
-            
-            Return ONLY valid JSON in the following format:
-            {{
-                "finding": "Detailed clinical synthesis of the probable pathologies...",
-                "confidence": 0.0-1.0,
-                "suggestions": "Recommended clinical next steps or suggestions based on these findings..."
-            }}
-            """
+    def analyze_xray(self, image_path: str) -> dict:
+        """
+        Full pipeline:
+          1. Groq VLM analysis with specialized radiologist prompt.
+          2. Fallback to larger VLM if first choice fails.
+          3. Metadata enrichment.
+        """
+        logger.info("X-ray analysis started: %s", image_path)
 
-            response = self.client.chat.completions.create(
-                model=self.llm_model,
-                messages=[
-                    {"role": "system", "content": "You are a clinical AI assistant that outputs strictly JSON."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.1,
-                max_tokens=500,
-                response_format={"type": "json_object"}
+        report: dict | None = None
+        errors = []
+        FALLBACK_VLM = "gpt-5.4"
+        # Sequential attempt with fallback
+        for model in [self.vlm_model, FALLBACK_VLM]:
+            try:
+                logger.info("Running VLM analysis with %s...", model)
+                report = self._analyze_with_vlm(image_path, model=model)
+                break
+            except Exception as exc:
+                logger.warning("VLM %s failed: %s", model, exc)
+                errors.append(f"{model}: {str(exc)}")
+
+        if report is None:
+            raise RuntimeError(
+                f"X-ray analysis failed for all models. Errors: {'; '.join(errors)}"
             )
-            
-            output_text = response.choices[0].message.content
-            
-            return json.loads(output_text)
 
-        except Exception as e:
-            print(f"Error in X-Ray Synthesis step: {e}")
-            return {
-                "finding": f"Error synthesizing findings: {str(e)}",
-                "confidence": 0.0,
-                "suggestions": "Unable to provide suggestions due to an error."
-            }
+        # Attach metadata
+        report["report_id"] = f"xray_{uuid.uuid4().hex[:8]}"
+        report["generated_at"] = datetime.now(timezone.utc).isoformat()
+        report["model_used"] = report.get("model_used", self.vlm_model)
+        report["disclaimer"] = (
+            "This report is AI-generated and has NOT been reviewed by a licensed "
+            "radiologist. It must not be used for clinical decision-making without "
+            "professional medical review. No patient-identifiable data was processed."
+        )
 
-    def analyze_xray(self, image_path: str):
-        """Full Pipeline: Detection -> Synthesis"""
-        print(f"Analyzing X-Ray using TorchXRayVision: {image_path}")
-        
-        # Step 1: Computer Vision Detection
-        findings = self.detect_pathologies(image_path)
-        
-        if findings is None:
-             return {
-                "finding": "Error running the TorchXRayVision detection model on the image.",
-                "confidence": 0.0,
-                "suggestions": "Please upload a valid DICOM, PNG, or JPEG X-Ray image."
-            }
-            
-        print(f"Detection complete. Found probabilities: {findings}")
-        
-        # Step 2: LLM Synthesis
-        print("Synthesizing findings with Groq LLM...")
-        final_result = self.synthesize_findings(findings)
-        
-        return final_result
+        logger.info(
+            "X-ray analysis complete. Primary Diagnosis: %s (Severity: %s)",
+            report.get("primary_diagnosis", "Unknown"),
+            report.get("severity", "Unknown")
+        )
+        return report
