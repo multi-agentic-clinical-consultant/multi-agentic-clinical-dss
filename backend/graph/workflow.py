@@ -1,215 +1,151 @@
-from langgraph.graph import StateGraph, END
-from graph.state import ClinicalState
-from agents.xray_agent import XRayAgent
-from agents.consultant_agent import ConsultantAgent
-from agents.transcription_agent import TranscriptionAgent
+"""
+Background Prescription LangGraph Workflow
+==========================================
+Runs after a voice consultation ends.
+
+Nodes:
+  diagnose     → extract primary diagnosis + confidence from transcript
+  prescription → generate medications / treatment plan (RxNorm-validated)
+  soap         → generate SOAP note
+
+Input: PrescriptionState (full_transcript, patient_history, patient_id, session_id)
+Output: PrescriptionState with diagnosis, prescription, soap_note populated
+"""
+
+import json
+import logging
+import os
+
+from langgraph.graph import END, StateGraph
+
 from agents.prescription_agent import PrescriptionAgent
-from database import ClinicalDatabase
+from agents.transcription_agent import TranscriptionAgent
+from graph.state import PrescriptionState
+
+logger = logging.getLogger("prescription_workflow")
+
+_prescription_agent = PrescriptionAgent()
+_transcription_agent = TranscriptionAgent()
 
 
-# Initialize Agents & DB
-consultant_agent = ConsultantAgent()
-transcription_agent = TranscriptionAgent()
-prescription_agent = PrescriptionAgent()
-db = ClinicalDatabase()
-xray_agent = XRayAgent()
+# ── Node 1: Diagnose ──────────────────────────────────────────────────────────
 
-# ---------------------------------------
-# Node 0: Intent Classification (Enhanced)
-# ---------------------------------------
-def intent_node(state: ClinicalState) -> ClinicalState:
-    from groq import Groq
-    import os
-    
-    # Simple instatiation - in production, dependency inject or reuse global client
-    client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-    
-    user_text = state["patient_text"]
-    
-    system_prompt = """
-    You are a clinical intent router. 
-    Analyze the patient's request.
-    
-    If the user specifically mentions an "xray", "x-ray", "bone scan", "chest x-ray", or specifically asks you to analyze an image, classify as "xray".
-    Otherwise, classify as "consultation".
-    
-    Return ONLY one word: "xray" or "consultation".
+def diagnose_node(state: PrescriptionState) -> PrescriptionState:
     """
-    
+    Use the LLM to extract the primary diagnosis and confidence
+    from the conversation transcript.
+    """
+    from groq import Groq
+
+    client = Groq(api_key=os.environ["GROQ_API_KEY"])
+    prompt = f"""
+You are a clinical AI reviewing a doctor-patient conversation transcript.
+Your job is to identify the patient's primary medical complaint and likely diagnosis.
+
+TRANSCRIPT:
+{state["full_transcript"]}
+
+Return ONLY valid JSON (no markdown fences):
+{{
+  "diagnosis": "...",
+  "confidence": 0.0
+}}
+
+Rules:
+- "diagnosis" should be a concise clinical description of the primary condition.
+- "confidence" should be 0.0–1.0; be conservative if the transcript is vague.
+- If the transcript has no medical content, set diagnosis to "Undetermined" and confidence to 0.1.
+"""
     try:
         response = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_text}
-            ],
-            temperature=0.0
+            model=os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile"),
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1,
         )
-        intent = response.choices[0].message.content.strip().lower()
-        
-        # Validation fallback
-        if "xray" in intent or "x-ray" in intent:
-            state["intent"] = "xray"
-        else:
-            state["intent"] = "consultation"
-            
+        text = response.choices[0].message.content.strip()
+        # Strip markdown fences if present
+        if "```json" in text:
+            text = text.split("```json")[1].split("```")[0].strip()
+        elif "```" in text:
+            text = text.split("```")[1].split("```")[0].strip()
+
+        result = json.loads(text)
+        state["diagnosis"] = result.get("diagnosis", "Undetermined")
+        state["confidence"] = float(result.get("confidence", 0.5))
+        logger.info(
+            "Diagnosis: '%s' (confidence=%.2f)", state["diagnosis"], state["confidence"]
+        )
     except Exception as e:
-        # Fallback to keyword matching if LLM fails
-        print(f"Intent Router Error: {e}")
-        text = user_text.lower()
-        if "xray" in text or "x-ray" in text or "bone" in text or "chest" in text or "scan" in text or "image" in text or "picture" in text:
-            state["intent"] = "xray"
-        else:
-            state["intent"] = "consultation"
+        logger.exception("diagnose_node failed: %s", e)
+        state["diagnosis"] = "Undetermined"
+        state["confidence"] = 0.0
 
     return state
 
 
-# ---------------------------------------
-# Node 1: XRay Agent (if X-ray/image provided)
-# ---------------------------------------
-def xray_node(state: ClinicalState) -> ClinicalState:
+# ── Node 2: Prescription ──────────────────────────────────────────────────────
 
-    if state.get("image_path"):
-        findings = xray_agent.analyze_xray(state["image_path"])
-        state["xray_findings"] = findings
-
-    return state
-
-
-# ---------------------------------------
-# Node 2: Consultant Agent (Diagnosis)
-# ---------------------------------------
-def consultant_node(state: ClinicalState) -> ClinicalState:
-
-    # If xray findings exist, append them to patient text
-    input_text = state["patient_text"]
-
-    if state.get("xray_findings"):
-        input_text += f"\nX-Ray/Image Findings: {state['xray_findings']}"
-
-    result = consultant_agent.handle_case(input_text)
-
-    state["diagnosis"] = result.get("diagnosis", "Unknown Diagnosis")
-    state["confidence"] = result.get("confidence", 0.0)
-
-    return state
-
-
-# ---------------------------------------
-# Node 2: Confidence Check
-# ---------------------------------------
-def confidence_node(state: ClinicalState) -> ClinicalState:
-
-    if state["confidence"] is not None and state["confidence"] < 0.85:
-        state["requires_human_review"] = True
-    else:
-        state["requires_human_review"] = False
-
-    return state
-
-
-# ---------------------------------------
-# Node 3: Prescription Agent (Meds & Referral)
-# ---------------------------------------
-def prescription_node(state: ClinicalState) -> ClinicalState:
-
-    diagnosis = state["diagnosis"]
-    if state["requires_human_review"]:
-        # If confidence is low, we might still generate tentative plans or defer
-        # But we'll just run it as a regular operation
-        pass
-
-    # Dynamically fetch patient history from MongoDB if a patient_id is provided
-    # and no history was passed in the initial state
-    patient_id = state.get("patient_id")
-    current_history = state.get("patient_history")
-    
-    if patient_id and (not current_history or current_history == "No known allergies or past conditions."):
-        print(f"Workflow: Fetching history for patient {patient_id} from MongoDB...")
-        state["patient_history"] = db.get_patient_history(patient_id)
-
-    result = prescription_agent.generate_prescription_and_referral(
-        state["patient_text"],
-        diagnosis,
-        state.get("patient_history", "No known allergies or past conditions.")
-    )
-    state["prescription"] = result.get("prescription")
-    state["referral"] = result.get("referral")
-    return state
-
-
-# ---------------------------------------
-# Node 4: Transcription Agent (SOAP Generation)
-# ---------------------------------------
-def transcription_node(state: ClinicalState) -> ClinicalState:
-
-    soap = transcription_agent.generate_soap(
-        state["patient_text"],
-        state["diagnosis"]
-    )
-
-    state["soap_note"] = soap
-    return state
-
-
-# ---------------------------------------
-# Node 5: Database Node (Saving Results)
-# ---------------------------------------
-def database_node(state: ClinicalState) -> ClinicalState:
-    patient_id = state.get("patient_id", "anonymous_patient")
-    print(f"Workflow: Saving session for {patient_id} to MongoDB...")
-    
-    db.save_session(patient_id, state)
-    
-    return state
-
-
-# ---------------------------------------
-# Build Workflow Graph
-# ---------------------------------------
-def build_workflow():
-
-    workflow = StateGraph(ClinicalState)
-
-    # Add nodes
-    workflow.add_node("consultant", consultant_node)
-    workflow.add_node("confidence_check", confidence_node)
-    workflow.add_node("prescription", prescription_node)
-    workflow.add_node("transcription", transcription_node)
-    workflow.add_node("database", database_node)
-    workflow.add_node("xray", xray_node)
-    # Entry point
-    workflow.set_entry_point("consultant")
-
-    # Routing
-    def route_intent(state: ClinicalState):
-        if not state.get("image_path"):
-            return "consultant"
-        if state.get("intent") == "xray":
-            return "xray"
-        return "consultant"
-
-    workflow.add_conditional_edges(
-        "intent",
-        route_intent,
-        {
-            "xray": "xray",
-            "consultant": "consultant"
+def prescription_node(state: PrescriptionState) -> PrescriptionState:
+    """
+    Generate a prescription / treatment plan using RxNorm validation
+    and optional web search for FDA warnings.
+    """
+    try:
+        result = _prescription_agent.generate_prescription_and_referral(
+            patient_text=state["full_transcript"],
+            diagnosis=state["diagnosis"],
+            patient_history=state.get("patient_history", "No known allergies or past conditions."),
+        )
+        state["prescription"] = result
+        logger.info("Prescription generated for session %s", state["session_id"])
+    except Exception as e:
+        logger.exception("prescription_node failed: %s", e)
+        state["prescription"] = {
+            "prescription": {
+                "medications": [],
+                "treatment_plan": "Error generating treatment plan.",
+                "drug_interaction_check": "Error.",
+            },
+            "referral": {
+                "specialist_escalation": "Please consult a licensed physician.",
+                "follow_up_plan": "Follow up with your primary care provider.",
+            },
         }
-    )
-    
-    workflow.add_edge("xray", "consultant")
-    workflow.add_edge("consultant", "confidence_check")
-    workflow.add_edge("confidence_check", "prescription")
-    
-    # Scribe/Transcription runs after prescription
-    workflow.add_edge("prescription", "transcription")
-    
-    # Finally, save everything to the database
-    workflow.add_edge("transcription", "database")
+    return state
 
-    workflow.add_edge("database", END)
+
+# ── Node 3: SOAP note ─────────────────────────────────────────────────────────
+
+def soap_node(state: PrescriptionState) -> PrescriptionState:
+    """
+    Generate a structured SOAP note from the transcript and diagnosis.
+    """
+    try:
+        soap = _transcription_agent.generate_soap(
+            patient_text=state["full_transcript"],
+            diagnosis=state["diagnosis"],
+        )
+        state["soap_note"] = soap
+        logger.info("SOAP note generated for session %s", state["session_id"])
+    except Exception as e:
+        logger.exception("soap_node failed: %s", e)
+        state["soap_note"] = {}
+    return state
+
+
+# ── Build workflow ────────────────────────────────────────────────────────────
+
+def build_prescription_workflow():
+    """Compile and return the LangGraph prescription pipeline."""
+    workflow = StateGraph(PrescriptionState)
+
+    workflow.add_node("diagnose", diagnose_node)
+    workflow.add_node("prescription", prescription_node)
+    workflow.add_node("soap", soap_node)
+
+    workflow.set_entry_point("diagnose")
+    workflow.add_edge("diagnose", "prescription")
+    workflow.add_edge("prescription", "soap")
+    workflow.add_edge("soap", END)
 
     return workflow.compile()
-
