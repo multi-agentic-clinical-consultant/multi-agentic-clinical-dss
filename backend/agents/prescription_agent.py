@@ -15,11 +15,11 @@ class PrescriptionAgent:
 
         # Step 1: Use LLM to extract potential drug names FIRST based on diagnosis
         extraction_prompt = f"""
-Based on the following diagnosis, what are 1 or 2 standard medication names typically prescribed?
-Reply ONLY with a comma separated list of the generic drug names.
+        Based on the following diagnosis, what are 1 or 2 standard medication names typically prescribed?
+        Reply ONLY with a comma separated list of the generic drug names.
 
-DIAGNOSIS: "{diagnosis}"
-"""
+        DIAGNOSIS: "{diagnosis}"
+        """
         try:
             extraction_response = self.client.chat.completions.create(
                 model="llama-3.1-8b-instant",
@@ -68,7 +68,10 @@ DIAGNOSIS: "{diagnosis}"
         # Step 2.5: Query Web Search for recent FDA warnings (Simulated Web Search capability via DuckDuckGo)
         web_search_data = ""
         try:
-            from duckduckgo_search import DDGS
+            try:
+                from ddgs import DDGS
+            except ImportError:
+                from duckduckgo_search import DDGS
             with DDGS() as ddgs:
                 for drug in suggested_drugs[:1]: # search only the first drug to save time
                     results = ddgs.text(f"{drug} FDA warning safety interaction", max_results=2)

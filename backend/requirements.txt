@@ -1,0 +1,22 @@
+# ── LiveKit Voice Agent ────────────────────────────────────────────────────────
+livekit-agents>=0.12.0
+livekit-plugins-deepgram       # STT (nova-2) + TTS (Aura)
+livekit-plugins-openai         # LLM via OpenAI-compatible API (used for Groq)
+livekit-plugins-silero         # VAD
+livekit-plugins-elevenlabs     # Optional: higher-quality TTS
+
+# ── LLM / Orchestration ────────────────────────────────────────────────────────
+groq                           # Groq Python SDK (used by prescription + SOAP agents)
+langgraph                      # Background prescription pipeline
+langchain-core                 # LangGraph dependency
+
+# ── Moss Semantic Search (RAG) ─────────────────────────────────────────────────
+inferedge-moss                 # Moss Python SDK
+
+# ── Prescription pipeline dependencies ────────────────────────────────────────
+requests                       # RxNorm API calls
+ddgs                           # FDA / drug safety web search (renamed from duckduckgo-search)
+duckduckgo-search              # FDA / drug safety web search
+# ── Utilities ─────────────────────────────────────────────────────────────────
+python-dotenv
+pypdf                          # Optional: load PDF knowledge files for Moss indexing
